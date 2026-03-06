@@ -1,77 +1,118 @@
-# go-test-sift
+# go-test-regroup
 
-A tool for processing Go test output that reconstructs and regroups parallel test logs into their logical structure.
+`go-test-regroup` processes verbose `go test -v` output and reconstructs
+interleaved parallel test logs into per-test output, preserving
+parent/child test hierarchy.
 
 ## Why?
 
-When Go runs tests in parallel, the output from different tests gets interleaved in the log. `go-test-sift` automatically regroups this output so all lines from each test are collected together, maintaining the proper parent/child test hierarchy. This makes test logs much easier to read and debug.
+When Go runs tests in parallel, output from different tests can become
+interleaved. `go-test-regroup` regroups that output so each test's logs appear
+together, making failures and test-local diagnostics much easier to
+read.
 
 ## Installation
 
 ```sh
-go install github.com/frobware/go-test-sift@latest
+GOPROXY=direct go install github.com/frobware/go-test-regroup@latest
+```
+
+The `GOPROXY=direct` is needed because the Go module proxy has a
+cached entry from the repo's previous name that conflicts with
+`@latest` resolution. This will resolve once the proxy cache expires.
+
+To build from source with version information:
+
+```sh
+make build
 ```
 
 ## Usage
 
-The simplest case is to pipe Go test output directly to `go-test-sift`:
+The simplest case is to pipe Go test output directly to `go-test-regroup`:
 
 ```sh
-go test ./... -v | go-test-sift
+go test ./... -v | go-test-regroup
 ```
 
-This will regroup all the interleaved parallel test output into a clean, hierarchical format where each test's output is kept together.
+This regroups all interleaved parallel test output into a clean,
+hierarchical format where each test's output is kept together.
 
 You can also process existing log files or URLs:
 
 ```sh
-go-test-sift test.log
-go-test-sift https://path/to/test.log
+go-test-regroup test.log
+go-test-regroup https://path/to/test.log
 ```
 
-### Additional Options
+### Viewing failures
 
-To just see test failures:
 ```sh
-go-test-sift -l test.log     # Shows failed test names
-go-test-sift -L test.log     # Shows failed tests with their output
+go-test-regroup -l test.log     # Show failed test names
+go-test-regroup -L test.log     # Show failed tests with their output
 ```
 
-To save regrouped output to files:
+### Writing per-test files
+
+`go-test-regroup -w` writes each test's regrouped output to
+`<base>/<test-name>/output.log`. Subtests with `/` in their names
+become nested directories.
+
 ```sh
-go-test-sift -w test.log     # Creates directory structure by test name
+go-test-regroup -w test.log              # Write to current directory
+go-test-regroup -w -o out/ test.log      # Write to out/
+go-test-regroup -w --reuse test.log      # Reuse existing directories
 ```
 
-### Test Filtering
+### Test filtering
 
-The `-t` flag accepts a regular expression to filter which tests to process. It can be used:
-- On its own to filter the default regrouped output
-- Combined with `-l` or `-L` to filter which failures to show
-- Combined with `-w` to filter which test outputs to write to files
+The `-t` flag accepts a regular expression to filter which tests to
+process. It can be combined with any output mode:
 
-Examples:
 ```sh
-# Only show output for specific tests
-go-test-sift -t "TestAuth.*" test.log
-
-# Only summarise failures for specific tests
-go-test-sift -t "TestAuth.*" -l test.log
-
-# Only write specific test outputs to files
-go-test-sift -t "TestAuth.*" -w test.log
+go-test-regroup -t "TestAuth.*" test.log        # Filter regrouped output
+go-test-regroup -t "TestAuth.*" -l test.log     # Filter failure summary
+go-test-regroup -t "TestAuth.*" -w test.log     # Filter file output
 ```
 
-### Synopsis
+### Unmatched output
+
+By default, lines that cannot be confidently attributed to a test are
+suppressed. This includes preamble before the first test,
+output from truncated in-flight tests, and trailing content after the
+test run. Use `-u` to show them:
 
 ```sh
-go-test-sift [options] [file|url ...]
-  -F	Force directory creation even if directories exist
-  -L	Print summary of failures and include the full output for each failure
-  -d	Enable debug output
-  -l	Print summary of failures (list test names with failures)
+go-test-regroup -u test.log
+```
+
+When writing files with `-w`, unmatched lines are always written to
+`_unmatched/output.log`.
+
+## Notes
+
+- `go-test-regroup` works on the observable verbose output format produced by
+  `go test -v`. It does not require or use `go test -json`.
+- Output that cannot be confidently attributed to a test is preserved
+  as unmatched rather than guessed. Incomplete tests at EOF
+  are marked with `=== INCOMPLETE TestName ===` to preserve their
+  attribution context.
+
+## Synopsis
+
+```
+go-test-regroup [options] [file|url ...]
+  -F, --reuse
+        Reuse existing output directories instead of failing
+  -L    Print summary of failures and include the full output for each failure
+  -d    Enable debug output
+  -l    Print summary of failures (list test names with failures)
   -o string
-        Base directory to write output files (default current directory) (default ".")
+        Base directory to write output files (default ".")
   -t string
-        Regular expression to filter test names for summary output (default ".*")
-  -w	Write each test's output to individual files
+        Regular expression to filter test names (default ".*")
+  -u    Show unmatched lines that could not be attributed to a test
+  -V, --version
+        Print version information and exit
+  -w    Write each test's output to individual files
 ```
