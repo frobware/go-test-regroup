@@ -176,19 +176,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	merged := &ParseResult{}
-	openInputs(flag.Args(), *debugFlag, func(name string, r io.Reader) {
-		result, err := Parse(r)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", name, err)
-			return
-		}
-		merged.Merge(result)
-	})
-
-	filtered := merged.Filter(reTest)
-
 	if *writeFiles {
+		merged := &ParseResult{}
+		openInputs(flag.Args(), *debugFlag, func(name string, r io.Reader) {
+			result, err := Parse(r)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", name, err)
+				return
+			}
+			merged.Merge(result)
+		})
+		filtered := merged.Filter(reTest)
 		if err := writeResults(filtered, *outputDir, reuseFlag, *debugFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -197,5 +195,36 @@ func main() {
 	}
 
 	failuresOnly := *listFailures || *listFailuresWithOutput
-	printResults(filtered, failuresOnly, *listFailuresWithOutput, *showUnmatched)
+	showOutput := !failuresOnly || *listFailuresWithOutput
+
+	openInputs(flag.Args(), *debugFlag, func(name string, r io.Reader) {
+		err := ParseStream(r, func(e Event) error {
+			if e.Test != nil {
+				if !reTest.MatchString(e.Test.Name) {
+					return nil
+				}
+				if failuresOnly && e.Test.Status != FailMarker {
+					return nil
+				}
+				indent := strings.Repeat("    ", e.Test.Level)
+				fmt.Printf("%s--- %s: %s (%s)\n",
+					indent, e.Test.Status, e.Test.Name, e.Test.Time)
+				if showOutput {
+					for _, line := range e.Test.Output {
+						fmt.Printf("%s    %s\n", indent, line)
+					}
+				}
+			}
+			if e.Unmatched != nil && *showUnmatched {
+				fmt.Println("=== UNMATCHED ===")
+				for _, line := range e.Unmatched {
+					fmt.Println(line)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", name, err)
+		}
+	})
 }
